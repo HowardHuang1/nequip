@@ -1,0 +1,21 @@
+block                                              n median cos  frac<0  median |gF|/|gE|
+type_embed                                       128     -0.048    0.57              1.67
+layer0_convnet.conv.linear_1                    1024     -0.096    0.55              1.44
+layer0_convnet.conv.edge_mlp                    8704     +0.006    0.50              2.31
+layer0_convnet.conv.linear_2                    3072     -0.042    0.53              1.84
+layer1_convnet.conv.linear_1                    2048     +0.029    0.47              4.25
+layer1_convnet.conv.edge_mlp                   14848     +0.016    0.50              2.55
+layer1_convnet.conv.linear_2                    9216     -0.066    0.53              4.40
+layer1_convnet.conv.sc                        131072     -0.039    0.53              2.10
+layer2_convnet.conv.linear_1                    3072     +0.018    0.50              2.13
+layer2_convnet.conv.edge_mlp                   20992     +0.048    0.48              2.51
+layer2_convnet.conv.linear_2                   12288     +0.080    0.48              1.68
+layer2_convnet.conv.sc                        163840     -0.008    0.52              2.09
+layer3_convnet.conv.linear_1                    4096     +0.043    0.45              3.65
+layer3_convnet.conv.edge_mlp                    8704     +0.044    0.40              3.55
+layer3_convnet.conv.linear_2                    2048     +0.004    0.50              3.78
+layer3_convnet.conv.sc                         32768     +0.006    0.50              1.58
+per_atom_energy_readout                           32     +0.115    0.48              1.48
+global                                        417952     -0.079    0.58              1.96
+
+noise floor (global): median cos(gE_A,gE_B)=+0.999, median cos(gF_A,gF_B)=+0.856; fraction of steps where gE(A) and gE(B) point opposite = 0.12
