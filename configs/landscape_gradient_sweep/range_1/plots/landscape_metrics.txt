@@ -1,0 +1,20 @@
+1000 train structures, 417,952 params, grid 31x31, alpha,beta in [-1, 1]
+cos(delta, eta) = +0.0022
+centre: L_E=1.2290e-06  L_F=3.4195e-03
+
+ENERGY L_E: max/centre = 3.86e+18, min/centre = 1
+    local_minima: 8
+    local_maxima: 0
+    frac_points_with_a_concave_axis: 0.2711
+    mean_abs_2nd_difference_log10: 0.426
+FORCE  L_F: max/centre = 5.9e+17, min/centre = 1
+    local_minima: 1
+    local_maxima: 0
+    frac_points_with_a_concave_axis: 0.02973
+    mean_abs_2nd_difference_log10: 0.2275
+
+GRADIENT MAPS (full parameter space)
+    fraction of grid points with cos(g_E, g_F) < 0: 0.145
+    cos at trained model: +0.403
+    median |g_F|/|g_E| over grid: 123
+    fraction of grid points with in-plane angle > 90 deg: 0.068

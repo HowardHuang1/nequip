@@ -1,18 +1,28 @@
 #!/bin/bash
-# PBS batch job: loss-landscape sweep for the tutorial NequIP model on one Polaris node (4 GPUs).
-# Submit from the login node (see end of file for the exact command).
+# PBS batch job: loss + gradient landscape sweeps for several zoom ranges on one Polaris node (4 GPUs).
 #
-# Stages (each logged under configs/landscape_job_logs/):
-#   1. benchmark one evaluation + smoke test      (aborts the job if the script is broken)
-#   2. loss landscapes, grid 31x31, 1000 train structures, rows sharded over the 4 GPUs
-#   3. gradient maps, small grid, only if enough walltime is left
-#   4. plots
+# Settings (pass with qsub -v; use ':' between ranges because ',' separates qsub -v variables):
+#   RANGES   zoom half-widths, e.g. "1.0:0.1:0.03"  (alpha, beta in [-R, R])
+#   JOBTAG   label for this job's log directory (default "run")
+#   GRID     points per axis, used for BOTH sweeps (default 31)
+#   NSTRUCT  structures per evaluation, used for BOTH sweeps (default 1000)
+#
+# Results: configs/landscape_loss_sweep/range_<R>/ and configs/landscape_gradient_sweep/range_<R>/
+#          (plus zoom_comparison/ in each, from compare_ranges.py)
+# Logs go OUTSIDE the repo, to ~/.cache/landscape_job_logs/<JOBTAG>/; the smoke test uses node-local /tmp
+# and is deleted, so the repo only ever gets the two result folders.
+#
+# Stages: 1. benchmark   2. smoke test (3x3 grid, two ranges, gradients, plotting, comparison)
+#         3. loss sweep   4. gradient sweep   5. plots + comparison
 
 WALL=3600                      # must match -l walltime
 CFG=/home/howardhuang/nequip/configs
 CK=$CFG/outputs/2026-10-24/04-09-50/best.ckpt
-SUF=${TAG:+_$TAG}              # optional: qsub -v TAG=capacity -> separate output dirs per job
-LOG=$CFG/landscape_job_logs$SUF
+RANGES=${RANGES:-1.0}; JOBTAG=${JOBTAG:-run}; GRID=${GRID:-31}; NSTRUCT=${NSTRUCT:-1000}
+RL=${RANGES//:/,}              # comma form for --ranges
+LOSS_OUT=$CFG/landscape_loss_sweep
+GRAD_OUT=$CFG/landscape_gradient_sweep
+LOG=$HOME/.cache/landscape_job_logs/$JOBTAG
 mkdir -p "$LOG"
 cd "$CFG" || exit 1
 export PYTHONPATH=$CFG/grad_diag OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8
@@ -27,68 +37,77 @@ case "$(which python)" in
   *) PY=/home/howardhuang/.conda/envs/nequip/bin/python ;;   # fall back to the env's interpreter
 esac
 echo "python: $PY -> $(which $PY)"
-
-echo "start $(date)  host $(hostname)"; nvidia-smi -L
+echo "start $(date)  host $(hostname)  ranges=$RL grid=$GRID nstruct=$NSTRUCT"; nvidia-smi -L
 $PY -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.device_count())"
 
-# ---- 1. benchmark / smoke test
+# ---- 1. benchmark
 echo "=== bench ==="
 CUDA_VISIBLE_DEVICES=0 $PY grad_diag/loss_landscape.py --ckpt $CK --config grad_conflict.yaml \
-    --n-structures 1000 --batch-size 100 --device cuda --bench > $LOG/bench.log 2>&1
-rc=$?; cat $LOG/bench.log | grep -v -i warn | tail -15
-if [ $rc -ne 0 ]; then echo "BENCH FAILED (rc=$rc) -- aborting"; exit 1; fi
+    --n-structures $NSTRUCT --batch-size 100 --device cuda --bench > $LOG/bench.log 2>&1
+rc=$?; grep -v -i warn $LOG/bench.log | tail -12
+if [ $rc -ne 0 ]; then echo "BENCH FAILED (rc=$rc) -- aborting"; echo "FAILED (bench) $(date)" > $LOG/STATUS; exit 1; fi
 
-# ---- 1b. tiny end-to-end smoke test (3x3 grid, with gradients) + plotting, so any remaining bug in the
-#          sweep or plot code shows up in seconds instead of after the long sweep
+# ---- 2. smoke test in node-local /tmp (never in the repo): two ranges + gradients + plot + comparison
 echo "=== smoke test ==="
+SM=$(mktemp -d /tmp/landscape_smoke.XXXXXX)
 CUDA_VISIBLE_DEVICES=0 $PY grad_diag/loss_landscape.py --ckpt $CK --config grad_conflict.yaml \
-    --n-structures 50 --batch-size 50 --grid 3 --gradients --device cuda \
-    --out $LOG/smoke > $LOG/smoke.log 2>&1 \
-  && $PY grad_diag/plot_loss_landscape.py $LOG/smoke >> $LOG/smoke.log 2>&1
-rc=$?; grep -v -i warn $LOG/smoke.log | tail -20
+    --n-structures 50 --batch-size 50 --grid 3 --ranges 0.1,0.01 --gradients --device cuda \
+    --out $SM > $LOG/smoke.log 2>&1 \
+  && $PY grad_diag/plot_loss_landscape.py $SM/range_0.1 >> $LOG/smoke.log 2>&1 \
+  && $PY grad_diag/compare_ranges.py $SM $SM >> $LOG/smoke.log 2>&1
+rc=$?; rm -rf $SM
+grep -v -i warn $LOG/smoke.log | tail -15
 if [ $rc -ne 0 ]; then echo "SMOKE TEST FAILED (rc=$rc) -- aborting"; echo "FAILED (smoke test) $(date)" > $LOG/STATUS; exit 1; fi
 
-# ---- 2. loss landscapes, 4 shards
-echo "=== loss sweep (grid 31) ==="
-rows=(0:8 8:16 16:24 24:31)
+# ---- 3. loss sweep: 4 processes (one per GPU), each a block of grid rows, all ranges in one process
+echo "=== loss sweep ==="
 for k in 0 1 2 3; do
-  CUDA_VISIBLE_DEVICES=$k timeout 1800 $PY grad_diag/loss_landscape.py --ckpt $CK --config grad_conflict.yaml \
-      --n-structures 1000 --batch-size 100 --grid 31 --rows ${rows[$k]} --device cuda \
-      --out $CFG/landscape_loss_sweep$SUF > $LOG/sweep_$k.log 2>&1 &
+  r0=$(( k * GRID / 4 )); r1=$(( (k + 1) * GRID / 4 ))
+  CUDA_VISIBLE_DEVICES=$k timeout 1500 $PY grad_diag/loss_landscape.py --ckpt $CK --config grad_conflict.yaml \
+      --n-structures $NSTRUCT --batch-size 100 --grid $GRID --rows $r0:$r1 --ranges $RL --device cuda \
+      --out $LOSS_OUT > $LOG/loss_$k.log 2>&1 &
 done
 wait
 echo "loss sweep done at $SECONDS s"
 
-# ---- 3. gradient maps if there is time left (>= 12 min after leaving 4 min for plots)
-REMAIN=$(( WALL - SECONDS - 240 ))
-if [ $REMAIN -gt 720 ]; then
-  echo "=== gradient maps (grid 17, 200 structures), budget ${REMAIN}s ==="
-  grows=(0:5 5:9 9:13 13:17)
-  for k in 0 1 2 3; do
-    CUDA_VISIBLE_DEVICES=$k timeout $REMAIN $PY grad_diag/loss_landscape.py --ckpt $CK --config grad_conflict.yaml \
-        --n-structures 200 --batch-size 50 --grid 17 --rows ${grows[$k]} --gradients --device cuda \
-        --out $CFG/landscape_gradient_sweep$SUF > $LOG/grad_$k.log 2>&1 &
-  done
-  wait
-else
-  echo "skipping gradient maps: only ${REMAIN}s left"
-fi
+# ---- 4. gradient sweep: same grid, same structures, same ranges (leaves 10 min for plotting)
+REMAIN=$(( WALL - SECONDS - 600 ))
+echo "=== gradient sweep, budget ${REMAIN}s ==="
+for k in 0 1 2 3; do
+  r0=$(( k * GRID / 4 )); r1=$(( (k + 1) * GRID / 4 ))
+  CUDA_VISIBLE_DEVICES=$k timeout $REMAIN $PY grad_diag/loss_landscape.py --ckpt $CK --config grad_conflict.yaml \
+      --n-structures $NSTRUCT --batch-size 100 --grid $GRID --rows $r0:$r1 --ranges $RL --gradients --device cuda \
+      --out $GRAD_OUT > $LOG/grad_$k.log 2>&1 &
+done
+wait
+echo "gradient sweep done at $SECONDS s"
 
-# ---- 4. plots (CPU)
+# ---- 5. plots per range, then the cross-range comparison
 echo "=== plots ==="
-$PY grad_diag/plot_loss_landscape.py $CFG/landscape_loss_sweep$SUF  > $LOG/plot_loss.log 2>&1;  tail -25 $LOG/plot_loss.log
-[ -d $CFG/landscape_gradient_sweep$SUF ] && { $PY grad_diag/plot_loss_landscape.py $CFG/landscape_gradient_sweep$SUF > $LOG/plot_grad.log 2>&1; tail -25 $LOG/plot_grad.log; }
-# ---- completion check: whoever reads the results can see at a glance whether the plots exist
-PL=$CFG/landscape_loss_sweep$SUF/plots
-if [ -f $PL/energy_landscape_3d.png ] && [ -f $PL/force_landscape_3d.png ] && [ -f $PL/landscape_metrics.txt ]; then
-  echo "OK  png=$(ls $PL/*.png | wc -l)  grad_maps=$([ -f $CFG/landscape_gradient_sweep$SUF/plots/gradient_conflict_maps.png ] && echo yes || echo no)  $(date)" > $LOG/STATUS
-else
-  echo "FAILED  (expected plots missing in $PL)  $(date)" > $LOG/STATUS
-fi
+for R in ${RANGES//:/ }; do
+  D=$(printf '%g' $R)
+  $PY grad_diag/plot_loss_landscape.py $LOSS_OUT/range_$D > $LOG/plot_loss_$D.log 2>&1
+  $PY grad_diag/plot_loss_landscape.py $GRAD_OUT/range_$D > $LOG/plot_grad_$D.log 2>&1
+done
+$PY grad_diag/compare_ranges.py $LOSS_OUT $GRAD_OUT > $LOG/compare.log 2>&1
+
+# ---- completion check
+: > $LOG/STATUS
+for R in ${RANGES//:/ }; do
+  D=$(printf '%g' $R)
+  if [ -f $LOSS_OUT/range_$D/plots/energy_landscape_3d.png ] && [ -f $GRAD_OUT/range_$D/plots/gradient_conflict_maps.png ]; then
+    echo "range $D: OK" >> $LOG/STATUS
+  else
+    echo "range $D: MISSING plots" >> $LOG/STATUS
+  fi
+done
+[ -f $GRAD_OUT/zoom_comparison/zoom_conflict_maps.png ] && echo "comparison: OK" >> $LOG/STATUS || echo "comparison: MISSING" >> $LOG/STATUS
+echo "$(date)" >> $LOG/STATUS
 cat $LOG/STATUS
 echo "end $(date)"
 
-# Submit with (for a second parallel job add `-v TAG=capacity` and use a matching landscape_job_logs_capacity/ dir):
-#   qsub -l select=1 -l filesystems=home:eagle -l walltime=1:00:00 -q debug -A HetRxnEnergy \
-#        -N landscape -j oe -o /home/howardhuang/nequip/configs/landscape_job_logs/job.log \
+# Submit (log directory must exist first):
+#   mkdir -p ~/.cache/landscape_job_logs
+#   qsub -l select=1 -l filesystems=home:eagle -l walltime=1:00:00 -q debug -A HetRxnEnergy -N landscapeA -j oe \
+#        -o $HOME/.cache/landscape_job_logs/A.log -v RANGES=1.0:0.1:0.03,JOBTAG=A \
 #        /home/howardhuang/nequip/configs/grad_diag/run_landscape.pbs

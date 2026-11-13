@@ -1,0 +1,20 @@
+metric                                      +-1        +-0.1       +-0.03       +-0.01      +-0.003      +-0.001
+grid                                         31           31           31           31           31           31
+n_structures                               1000         1000         1000         1000         1000         1000
+L_E at centre                         1.229e-06    1.229e-06    1.229e-06    1.229e-06    1.229e-06    1.229e-06
+L_F at centre                           0.00342      0.00342      0.00342      0.00342      0.00342      0.00342
+E max/centre                          3.856e+18    1.647e+05    1.421e+04         1552        144.1        17.78
+F max/centre                          5.899e+17        99.42        8.829        1.849        1.076        1.009
+E local_minima                                8            9            9            9            9            9
+E local_maxima                                0            0            0            0            0            0
+E frac_points_with_a_concave_axis        0.2711       0.1011            0            0            0      0.01546
+E mean_abs_2nd_difference_log10           0.426       0.1772       0.1504        0.096       0.0339     0.009204
+F local_minima                                1            1            1            1            1            1
+F local_maxima                                0            0            0            0            0            0
+F frac_points_with_a_concave_axis       0.02973            0            0            0            0            0
+F mean_abs_2nd_difference_log10          0.2275      0.01444     0.005469     0.001612    0.0002002    2.304e-05
+frac cos(gE,gF)<0                        0.1446      0.05723      0.05931      0.06035      0.06452      0.06243
+median cos                               0.4284       0.4028       0.4056        0.406       0.4059       0.4062
+cos at centre                            0.4028       0.4028       0.4028       0.4028       0.4028       0.4028
+frac in-plane angle>90deg               0.06764      0.01353      0.01561      0.01353      0.01249      0.02601
+median |gF|/|gE|                            123        0.786       0.7544       0.7528       0.7557       0.7718

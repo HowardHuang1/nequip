@@ -95,7 +95,7 @@ def main():
     ci, cj = int(np.argmin(np.abs(xs))), int(np.argmin(np.abs(ys)))
     cE, cF = LE[cj, ci], LF[cj, ci]
     info = (f"{int(d['n_structures'])} train structures, {int(d['n_params']):,} params, "
-            f"grid {len(xs)}x{len(ys)}")
+            f"grid {len(xs)}x{len(ys)}, alpha,beta in [-{xs.max():g}, {xs.max():g}]")
 
     surface3d(X, Y, LE, f"Energy loss landscape (per-atom-energy MSE)\n{info}",
               os.path.join(out, "energy_landscape_3d.png"), cE)

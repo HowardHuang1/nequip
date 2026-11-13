@@ -152,7 +152,9 @@ def main():
     ap.add_argument("--n-structures", type=int, default=200)
     ap.add_argument("--batch-size", type=int, default=50)
     ap.add_argument("--grid", type=int, default=21, help="points per axis")
-    ap.add_argument("--range", type=float, default=1.0, help="alpha, beta in [-range, range]")
+    ap.add_argument("--ranges", default="1.0",
+                    help="comma-separated half-widths R (alpha, beta in [-R, R]); each is written to "
+                         "<out>/range_<R>/ and the same two random directions are used for all of them")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--gradients", action="store_true", help="also compute gradient maps (slower)")
     ap.add_argument("--device", default="auto")
@@ -211,34 +213,39 @@ def main():
     if a.bench:
         return
 
-    # ---- sweep
-    xs = np.linspace(-a.range, a.range, a.grid)
-    ys = np.linspace(-a.range, a.range, a.grid)
+    # ---- sweep: one pass per zoom range. The same two random directions are used for every range,
+    #      so a smaller range is a true zoom of the same plane (same grid size and structures throughout).
+    ranges = [float(v) for v in a.ranges.split(",")]
     names = ["LE", "LF"] + (["nE", "nF", "cos", "gE0", "gE1", "gF0", "gF1"] if a.gradients else [])
-    res = {n: np.full((a.grid, a.grid), np.nan) for n in names}  # [j(beta), i(alpha)]
-    os.makedirs(a.out, exist_ok=True)
     r0, r1 = (0, a.grid) if a.rows is None else (int(v) for v in a.rows.split(":"))
     fname = "landscape.npz" if a.rows is None else f"landscape_rows{r0}-{r1}.npz"
-    t_start = time.time()
-    for j in range(r0, r1):
-        beta = ys[j]
-        for i, alpha in enumerate(xs):
-            set_point(alpha, beta)
-            if a.gradients:
-                r = eval_gradients(model, plist, dirs, batches, n_struct, n_atoms)
-                for n in names:
-                    res[n][j, i] = r[n]
-            else:
-                LE, LF = eval_losses(model, batches, n_struct, n_atoms)
-                res["LE"][j, i], res["LF"][j, i] = LE, LF
-        el = time.time() - t_start
-        done = j + 1 - r0
-        print(f"row {j+1}/{r1}  elapsed {el/60:.1f} min  ETA {el/done*(r1-j-1)/60:.1f} min", flush=True)
-        np.savez(os.path.join(a.out, fname), alphas=xs, betas=ys, n_structures=n_struct,
-                 n_atoms=n_atoms, seed=a.seed, ckpt=a.ckpt, n_params=n_par, cos_dirs=cosd,
-                 rows_done=j + 1, **res)
+    for R in ranges:
+        out_dir = os.path.join(a.out, f"range_{R:g}")
+        os.makedirs(out_dir, exist_ok=True)
+        xs = np.linspace(-R, R, a.grid)
+        ys = np.linspace(-R, R, a.grid)
+        res = {n: np.full((a.grid, a.grid), np.nan) for n in names}  # [j(beta), i(alpha)]
+        t_start = time.time()
+        for j in range(r0, r1):
+            beta = ys[j]
+            for i, alpha in enumerate(xs):
+                set_point(alpha, beta)
+                if a.gradients:
+                    r = eval_gradients(model, plist, dirs, batches, n_struct, n_atoms)
+                    for n in names:
+                        res[n][j, i] = r[n]
+                else:
+                    LE, LF = eval_losses(model, batches, n_struct, n_atoms)
+                    res["LE"][j, i], res["LF"][j, i] = LE, LF
+            el = time.time() - t_start
+            done = j + 1 - r0
+            print(f"range {R:g}  row {j+1}/{r1}  elapsed {el/60:.1f} min  "
+                  f"ETA {el/done*(r1-j-1)/60:.1f} min", flush=True)
+            np.savez(os.path.join(out_dir, fname), alphas=xs, betas=ys, n_structures=n_struct,
+                     n_atoms=n_atoms, seed=a.seed, ckpt=a.ckpt, n_params=n_par, cos_dirs=cosd,
+                     rows_done=j + 1, **res)
+        print(f"range {R:g}: done in {(time.time()-t_start)/60:.1f} min -> {out_dir}/{fname}", flush=True)
     set_point(0.0, 0.0)
-    print(f"done in {(time.time()-t_start)/60:.1f} min -> {a.out}/{fname}")
 
 
 if __name__ == "__main__":
